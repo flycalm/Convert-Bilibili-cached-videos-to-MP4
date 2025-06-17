@@ -1,0 +1,2 @@
+# 将python文件放到bilibili缓存目录下执行即可
+# 转换好的视频在converted_videos文件夹下
