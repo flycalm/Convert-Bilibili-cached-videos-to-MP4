@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from pathlib import Path
 import logging
+import json
+import re
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -113,10 +115,9 @@ class VideoConverter:
                 '-i', str(audio_file),
                 '-c', 'copy',  # 直接复制，不重新编码
                 '-y',  # 覆盖输出文件
-                str(output_file)
-            ]
+                str(output_file)            ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8', errors='ignore')
             logger.info(f"成功合并视频: {output_file.name}")
             return True
             
@@ -139,6 +140,9 @@ class VideoConverter:
             bool: 转换是否成功
         """
         logger.info(f"处理文件夹: {folder_path.name}")
+        
+        # 获取视频标题作为输出文件名
+        video_title = self.get_video_title(folder_path)
         
         # 查找.m4s文件
         video_m4s, audio_m4s = self.find_m4s_files(folder_path)
@@ -167,8 +171,17 @@ class VideoConverter:
             logger.error(f"重命名文件时出错: {e}")
             return False
         
-        # 合并视频和音频
-        output_file = self.output_dir / f"{folder_path.name}.mp4"
+        # 合并视频和音频，使用视频标题作为文件名
+        output_file = self.output_dir / f"{video_title}.mp4"
+        
+        # 如果文件已存在，添加序号避免覆盖
+        counter = 1
+        original_output_file = output_file
+        while output_file.exists():
+            stem = original_output_file.stem
+            output_file = self.output_dir / f"{stem}_{counter}.mp4"
+            counter += 1
+        
         success = self.merge_video_audio(video_mp4, audio_mp4, output_file)
         
         # 清理临时文件
@@ -208,6 +221,60 @@ class VideoConverter:
         logger.info(f"输出目录: {self.output_dir}")
         
         return success_count
+
+    def sanitize_filename(self, filename):
+        """
+        清理文件名，移除或替换不合法的字符
+        
+        Args:
+            filename (str): 原始文件名
+            
+        Returns:
+            str: 清理后的文件名
+        """
+        # Windows 不允许的字符
+        invalid_chars = r'[<>:"/\\|?*]'
+        # 替换不合法字符为下划线
+        sanitized = re.sub(invalid_chars, '_', filename)
+        
+        # 移除开头和结尾的空格和点
+        sanitized = sanitized.strip(' .')
+        
+        # 如果文件名为空或只有空格，使用默认名称
+        if not sanitized:
+            sanitized = "untitled"
+        
+        # 限制文件名长度（Windows 跅限制）
+        if len(sanitized) > 200:
+            sanitized = sanitized[:200]
+        
+        return sanitized
+    
+    def get_video_title(self, folder_path):
+        """
+        从videoInfo.json文件中读取视频标题
+        
+        Args:
+            folder_path (Path): 文件夹路径
+            
+        Returns:
+            str: 视频标题，如果读取失败则返回文件夹名
+        """
+        video_info_path = folder_path / "videoInfo.json"
+        
+        try:
+            if video_info_path.exists():
+                with open(video_info_path, 'r', encoding='utf-8') as f:
+                    video_info = json.load(f)
+                    title = video_info.get('title', folder_path.name)
+                    logger.info(f"读取到视频标题: {title}")
+                    return self.sanitize_filename(title)
+            else:
+                logger.warning(f"未找到videoInfo.json文件: {video_info_path}")
+                return folder_path.name
+        except Exception as e:
+            logger.error(f"读取videoInfo.json文件时出错: {e}")
+            return folder_path.name
 
 def main():
     """主函数"""
